@@ -872,9 +872,15 @@ def main():
             await application.updater.stop_on_signal()
         finally:
             # Properly shut down the application
+            logger.info("Stopping updater...")
+            await application.updater.stop()
+            logger.info("Stopping application...")
             await application.stop()
+            logger.info("Shutting down application...")
             await application.shutdown()
+            logger.info("Cleaning up web server...")
             await runner.cleanup()
+            logger.info("Shutdown complete")
 
     # Run the application
     try:
@@ -883,6 +889,13 @@ def main():
         logger.info("Bot stopped by user")
     except Exception as e:
         logger.error(f"Error running bot: {e}")
+        # Ensure we try to clean up even if there's an error
+        try:
+            asyncio.run(application.updater.stop())
+            asyncio.run(application.stop())
+            asyncio.run(application.shutdown())
+        except Exception as cleanup_error:
+            logger.error(f"Error during cleanup: {cleanup_error}")
 
 if __name__ == '__main__':
     main() 
