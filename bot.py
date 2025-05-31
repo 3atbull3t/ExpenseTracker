@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import random
 from constants import CATEGORIES  # Import CATEGORIES from constants.py
+from aiohttp import web
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -755,6 +757,23 @@ async def send_daily_summary_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
              logger.error(f"Error sending daily summary for user {user_id} (chat_id: {chat_id}): {e}")
 
+# Create web application
+app = web.Application()
+
+async def health_check(request):
+    """Handle health check requests."""
+    return web.Response(text="Bot is running!")
+
+app.router.add_get('/health', health_check)
+
+async def start_web_server():
+    """Start the web server."""
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 8080)))
+    await site.start()
+    logger.info("Web server started on port %s", os.getenv('PORT', 8080))
+
 def main():
     """Start the bot."""
     # Create the Application
@@ -834,8 +853,14 @@ def main():
     )
     logger.info("Daily summary job scheduled for 23:59.")
 
-    # Start the Bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Start both the bot and web server
+    async def start_services():
+        await start_web_server()
+        await application.initialize()
+        await application.start()
+        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    asyncio.run(start_services())
 
 if __name__ == '__main__':
     main() 
