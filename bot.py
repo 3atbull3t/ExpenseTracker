@@ -3,7 +3,10 @@ import logging
 from datetime import datetime, timedelta, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    filters, ContextTypes, ConversationHandler
+)
 from google_sheets import GoogleSheetsManager
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -48,12 +51,17 @@ TITHING_VERSES = [
 ]
 
 OVERSPENDING_VERSES = [
-    {"ref": "Matthew 6:19–21 (NIV)", "text": "Do not store up for yourselves treasures on earth, where moths and vermin destroy, and where thieves break in and steal. But store up for yourselves treasures in heaven... For where your treasure is, there your heart will be also.", "emoji": "📦"},
-    {"ref": "Hebrews 13:5 (NIV)", "text": "Keep your lives free from the love of money and be content with what you have, because God has said, ‘Never will I leave you; never will I forsake you.’", "emoji": "💸"},
-    {"ref": "1 Timothy 6:9–10 (NIV)", "text": "Those who want to get rich fall into temptation and a trap... For the love of money is a root of all kinds of evil.", "emoji": "⚠️"},
-    {"ref": "Luke 12:15 (NIV)", "text": "Watch out! Be on your guard against all kinds of greed; life does not consist in an abundance of possessions.", "emoji": "⚖️"},
-    {"ref": "Ecclesiastes 5:10 (NIV)", "text": "Whoever loves money never has enough; whoever loves wealth is never satisfied with their income. This too is meaningless.", "emoji": "🕳"},
-    {"ref": "Proverbs 23:4–5 (NIV)", "text": "Do not wear yourself out to get rich; do not trust your own cleverness. Cast but a glance at riches, and they are gone…", "emoji": "💼"},
+    {"ref": "Proverbs 21:20 (NIV)", "text": "The wise store up choice food and olive oil, but fools gulp theirs down.", "emoji": "🫒", "explanation": "Wise financial management involves saving and planning, not impulsive spending."},
+    {"ref": "Proverbs 13:11 (NIV)", "text": "Dishonest money dwindles away, but whoever gathers money little by little makes it grow.", "emoji": "🌱", "explanation": "Wealth built gradually through honest means is more sustainable than quick gains."},
+    {"ref": "Proverbs 22:7 (NIV)", "text": "The rich rule over the poor, and the borrower is slave to the lender.", "emoji": "⛓️", "explanation": "Debt creates dependency and limits freedom; it's better to live within your means."},
+    {"ref": "Luke 14:28-30 (NIV)", "text": "Suppose one of you wants to build a tower. Won't you first sit down and estimate the cost to see if you have enough money to complete it? For if you lay the foundation and are not able to finish it, everyone who sees it will ridicule you, saying, 'This person began to build and wasn't able to finish.'", "emoji": "🏗️", "explanation": "Planning and budgeting are essential before making financial commitments."},
+    {"ref": "Proverbs 27:23-24 (NIV)", "text": "Be sure you know the condition of your flocks, give careful attention to your herds; for riches do not endure forever, and a crown is not secure for all generations.", "emoji": "👑", "explanation": "Regular monitoring of your finances is crucial for long-term stability."},
+    # Verses from the old BIBLE_VERSES list
+    {"ref": "Matthew 6:21", "text": "For where your treasure is, there your heart will be also.", "emoji": "📖", "explanation": "A relevant verse about finances."},
+    {"ref": "Proverbs 21:5", "text": "The plans of the diligent lead surely to abundance, but everyone who is hasty comes only to poverty.", "emoji": "📖", "explanation": "A relevant verse about finances."},
+    {"ref": "Proverbs 3:9", "text": "Honor the Lord with your wealth and with the firstfruits of all your produce;", "emoji": "📖", "explanation": "A relevant verse about finances."},
+    {"ref": "Proverbs 22:7", "text": "The rich rules over the poor, and the borrower is the slave of the lender.", "emoji": "📖", "explanation": "A relevant verse about finances."},
+    {"ref": "Proverbs 27:23-24", "text": "Know well the prosperity of your flocks, and pay attention to your herds, for riches do not last forever; and does a crown endure to all generations?", "emoji": "📖", "explanation": "A relevant verse about finances."},
 ]
 
 FOOD_MODERATION_VERSES = [
@@ -84,13 +92,10 @@ ENCOURAGEMENT_NOTES = [
     "Small efforts today lead to big rewards tomorrow."
 ]
 
-BIBLE_VERSES = [
-    "'For where your treasure is, there your heart will be also.' - Matthew 6:21",
-    "'The plans of the diligent lead surely to abundance, but everyone who is hasty comes only to poverty.' - Proverbs 21:5",
-    "'Honor the Lord with your wealth and with the firstfruits of all your produce;' - Proverbs 3:9",
-    "'The rich rules over the poor, and the borrower is the slave of the lender.' - Proverbs 22:7",
-    "'Know well the prosperity of your flocks, and pay attention to your herds, for riches do not last forever; and does a crown endure to all generations?' - Proverbs 27:23-24"
-]
+# Conversation states
+AMOUNT, CATEGORY, DESCRIPTION = range(3)
+BUDGET_CATEGORY, BUDGET_AMOUNT = range(2)
+RESET_CATEGORY = 0
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /start is issued."""
@@ -106,13 +111,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Welcome to your Expense Tracker Bot!\n\n"
         "\"<i>For the love of money is a root of all kinds of evil. Some people, eager for money, have wandered from the faith and pierced themselves with many griefs.</i>\"\n\n- <b>1 Timothy 6:10 (NIV)</b>\n\n"
         "Here are the available commands:\n"
-        "/add &lt;amount&gt; &lt;category&gt; - Add an expense\n"
+        "/add - Add a new expense\n"
         "/view - View your expenses\n"
-        "/budget - Set or view budget limits\n"
-        "/set_daily &lt;amount&gt; - Set the total daily budget\n"
+        "/budget - Set category budgets\n"
+        "/set_daily - Set your daily budget\n"
+        "/set_weekly - Set your weekly budget\n"
+        "/set_monthly - Set your monthly budget\n"
         "/summary - Get daily expense summary\n"
-        "/reset_today [category] - Reset today's expenses (all or by category)\n"
-        "/undo - Undo your latest expense entry\n"
+        "/reset_today - Reset today's expenses\n"
+        "/undo - Undo your latest expense\n"
         "/help - Show this help message\n\n"
         "Available categories:\n"
     )
@@ -121,88 +128,189 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(welcome_message, parse_mode=ParseMode.HTML)
 
-async def add_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Add a new expense."""
+async def add_expense_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the add expense conversation."""
+    await update.message.reply_text(
+        "Please enter the amount and description (e.g., '10 milo' or '50 lunch at restaurant'):"
+    )
+    return AMOUNT
+
+async def add_expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the amount and description input and ask for category."""
     try:
-        # Parse command arguments
-        if len(context.args) < 2:
-            await update.message.reply_text(
-                "Please provide amount and category.\n"
-                "Example: /add 50 food"
-            )
-            return
-
-        amount = float(context.args[0])
-        category = context.args[1].lower()
-        description = " ".join(context.args[2:]) if len(context.args) > 2 else ""
-
-        if category not in CATEGORIES:
-            await update.message.reply_text(
-                f"Invalid category. Available categories:\n" + 
-                "\n".join([f"- {cat}" for cat in CATEGORIES.values()])
-            )
-            return
-
-        # Add expense to Google Sheets
-        user_id = update.effective_user.id
-        date = datetime.now().strftime("%Y-%m-%d")
-        sheets_manager.add_expense(user_id, date, amount, category, description)
-
+        # Split the message into amount and description
+        parts = update.message.text.split(maxsplit=1)
+        amount = float(parts[0])
+        description = parts[1] if len(parts) > 1 else ""
+        
+        context.user_data['amount'] = amount
+        context.user_data['description'] = description
+        
+        # Create keyboard for categories
+        keyboard = []
+        for category in CATEGORIES.values():
+            keyboard.append([InlineKeyboardButton(category, callback_data=f"category_{category}")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await update.message.reply_text(
-            f"✅ Expense added successfully!\n"
-            f"Amount: ${amount:.2f}\n"
-            f"Category: {CATEGORIES[category]}"
-            + (f"\nDescription: {description}" if description else "")
+            "Please select a category:",
+            reply_markup=reply_markup
         )
-
-        # Check category budget and provide feedback
-        user_id = update.effective_user.id # Redundant but good for clarity in this block
-        category_budget = sheets_manager.get_budget(user_id, category)
-
-        if category_budget is not None:
-            today_summary = sheets_manager.get_daily_summary(user_id)
-            spent_in_category_today = today_summary.get(category, 0)
-            remaining_category_budget = category_budget - spent_in_category_today
-
-            category_feedback_message = f"\n\n{CATEGORIES.get(category, category).capitalize()} Spending Today: ${spent_in_category_today:.2f} / ${category_budget:.2f}\n"
-            if remaining_category_budget > 0:
-                category_feedback_message += f"Remaining {CATEGORIES.get(category, category).capitalize()} Budget: ${remaining_category_budget:.2f}"
-            elif remaining_category_budget < 0:
-                category_feedback_message += f"⚠️ You are over your {CATEGORIES.get(category, category).capitalize()} budget by ${abs(remaining_category_budget):.2f}!"
-            else:
-                category_feedback_message += f"✅ You have spent exactly your {CATEGORIES.get(category, category).capitalize()} budget today."
-
-            await update.message.reply_text(category_feedback_message)
-
-        # Add relevant Bible verse based on category and budget status
-        verse_message = "\n\n"
-
-        if category == 'tithe':
-            selected_verse = random.choice(TITHING_VERSES)
-            verse_message += f"{selected_verse['emoji']} *{selected_verse['ref']}*\n{selected_verse['text']}"
-            await update.message.reply_text(verse_message, parse_mode='Markdown')
-        else:
-            # Check category budget threshold for verses
-            # Check category budget threshold
-            category_budget = sheets_manager.get_budget(user_id, category)
-            if category_budget is not None:
-                 today_summary = sheets_manager.get_daily_summary(user_id)
-                 spent_in_category_today = today_summary.get(category, 0)
-                 if spent_in_category_today > category_budget * 0.8: # 80% threshold for category
-                     if category in ['shopping', 'other']:
-                         print("[add_expense] Category in ['shopping', 'other'] and budget exceeded.")
-                         selected_verse = random.choice(OVERSPENDING_VERSES)
-                         verse_message += f"{selected_verse['emoji']} *{selected_verse['ref']}*\n{selected_verse['text']}"
-                         await update.message.reply_text(verse_message, parse_mode='Markdown')
-                     elif category == 'food':
-                        print("[add_expense] Food category budget exceeded, selecting food moderation verse.")
-                        selected_verse = random.choice(FOOD_MODERATION_VERSES)
-                        verse_message += f"{selected_verse['emoji']} *{selected_verse['ref']}*\n{selected_verse['text']}"
-                        await update.message.reply_text(verse_message, parse_mode='Markdown')
-                     # Add more category specific verse lists here if needed
-
+        return CATEGORY
     except ValueError:
-        await update.message.reply_text("Please provide a valid amount.")
+        await update.message.reply_text(
+            "Please enter a valid number followed by an optional description (e.g., '10 milo' or '50 lunch at restaurant')."
+        )
+        return AMOUNT
+
+async def add_expense_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the category selection and save the expense."""
+    query = update.callback_query
+    await query.answer()
+    
+    category = query.data.replace("category_", "")
+    amount = context.user_data['amount']
+    description = context.user_data['description']
+    
+    # Add expense to Google Sheets
+    user_id = update.effective_user.id
+    date = datetime.now().strftime("%Y-%m-%d")
+    sheets_manager.add_expense(user_id, date, amount, category, description)
+    
+    await query.edit_message_text(
+        f"✅ Expense added successfully!\n"
+        f"Amount: ${amount:.2f}\n"
+        f"Category: {category}"
+        + (f"\nDescription: {description}" if description else "")
+    )
+    
+    # Check budgets and provide feedback
+    context.user_data['category'] = category
+    await check_budgets(update, context)
+    
+    return ConversationHandler.END
+
+async def check_budgets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check all budget types and provide feedback."""
+    user_id = update.effective_user.id
+    selected_category_value = context.user_data['category']
+    
+    # Find the category key based on the selected value
+    category = None
+    for key, value in CATEGORIES.items():
+        if value == selected_category_value:
+            category = key
+            break
+
+    if category is None:
+        # This should ideally not happen if category selection is from predefined buttons
+        await send_message("❌ Error: Could not determine category.")
+        return
+    
+    # Get all summaries at the start
+    today_summary = sheets_manager.get_daily_summary(user_id)
+    weekly_summary = sheets_manager.get_weekly_summary(user_id)
+    monthly_summary = sheets_manager.get_monthly_summary(user_id)
+    
+    category_budget = sheets_manager.get_budget(user_id, category)
+    daily_budget = sheets_manager.get_budget(user_id, 'daily_total')
+    weekly_budget = sheets_manager.get_budget(user_id, 'weekly_total')
+    monthly_budget = sheets_manager.get_budget(user_id, 'monthly_total')
+    
+    # Function to send messages based on update type
+    async def send_message(text, parse_mode=None):
+        if update.callback_query:
+            await update.callback_query.message.reply_text(text, parse_mode=parse_mode)
+        else:
+            await update.message.reply_text(text, parse_mode=parse_mode)
+    
+    # Check category budget
+    if category_budget is not None:
+        # Use the selected_category_value for displaying in the message
+        spent_in_category_today = today_summary.get(category, 0)
+        remaining_category_budget = category_budget - spent_in_category_today
+        
+        if remaining_category_budget < 0:
+            await send_message(
+                f"⚠️ You are over your {selected_category_value} budget!\n"
+                f"Spent: ${spent_in_category_today:.2f} / Budget: ${category_budget:.2f}\n"
+                f"Over by: ${abs(remaining_category_budget):.2f}"
+            )
+            # Add relevant verse
+            if category == 'food':
+                selected_verse = random.choice(FOOD_MODERATION_VERSES)
+                verse_message = (
+                    f"\n{selected_verse['emoji']} <b>{selected_verse['ref']}</b>\n"
+                    f"<i>{selected_verse['text']}</i>"
+                )
+            else:
+                selected_verse = random.choice(OVERSPENDING_VERSES)
+                verse_message = (
+                    f"\n{selected_verse['emoji']} <b>{selected_verse['ref']}</b>\n"
+                    f"<i>{selected_verse['text']}</i>\n"
+                    f"<i>{selected_verse['explanation']}</i>"
+                )
+            await send_message(verse_message, parse_mode=ParseMode.HTML)
+    
+    # Check daily budget
+    if daily_budget is not None:
+        total_spent_today = sum(today_summary.values())
+        remaining_daily_budget = daily_budget - total_spent_today
+        
+        if remaining_daily_budget < 0:
+            await send_message(
+                f"⚠️ You are over your daily budget!\n"
+                f"Spent: ${total_spent_today:.2f} / Budget: ${daily_budget:.2f}\n"
+                f"Over by: ${abs(remaining_daily_budget):.2f}"
+            )
+            # Add overspending verse
+            selected_verse = random.choice(OVERSPENDING_VERSES)
+            verse_message = (
+                f"\n{selected_verse['emoji']} <b>{selected_verse['ref']}</b>\n"
+                f"<i>{selected_verse['text']}</i>\n"
+                f"<i>{selected_verse['explanation']}</i>"
+            )
+            await send_message(verse_message, parse_mode=ParseMode.HTML)
+    
+    # Check weekly budget
+    if weekly_budget is not None:
+        total_spent_week = sum(weekly_summary.values())
+        remaining_weekly_budget = weekly_budget - total_spent_week
+        
+        if remaining_weekly_budget < 0:
+            await send_message(
+                f"⚠️ You are over your weekly budget!\n"
+                f"Spent: ${total_spent_week:.2f} / Budget: ${weekly_budget:.2f}\n"
+                f"Over by: ${abs(remaining_weekly_budget):.2f}"
+            )
+            # Add overspending verse
+            selected_verse = random.choice(OVERSPENDING_VERSES)
+            verse_message = (
+                f"\n{selected_verse['emoji']} <b>{selected_verse['ref']}</b>\n"
+                f"<i>{selected_verse['text']}</i>\n"
+                f"<i>{selected_verse['explanation']}</i>"
+            )
+            await send_message(verse_message, parse_mode=ParseMode.HTML)
+    
+    # Check monthly budget
+    if monthly_budget is not None:
+        total_spent_month = sum(monthly_summary.get("this_month", {}).values())
+        remaining_monthly_budget = monthly_budget - total_spent_month
+        
+        if remaining_monthly_budget < 0:
+            await send_message(
+                f"⚠️ You are over your monthly budget!\n"
+                f"Spent: ${total_spent_month:.2f} / Budget: ${monthly_budget:.2f}\n"
+                f"Over by: ${abs(remaining_monthly_budget):.2f}"
+            )
+            # Add overspending verse
+            selected_verse = random.choice(OVERSPENDING_VERSES)
+            verse_message = (
+                f"\n{selected_verse['emoji']} <b>{selected_verse['ref']}</b>\n"
+                f"<i>{selected_verse['text']}</i>\n"
+                f"<i>{selected_verse['explanation']}</i>"
+            )
+            await send_message(verse_message, parse_mode=ParseMode.HTML)
 
 async def view_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View expenses with filtering options."""
@@ -266,18 +374,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text(f"No expenses found for the selected period.")
         return
 
-    message = f"📊 {title}:\n\n"
+    message = f" {title}:\n\n"
+
+    # Get relevant budget
+    budget = None
+    if data == "summary_daily":
+        budget = sheets_manager.get_budget(user_id, 'daily_total')
+    elif data == "summary_weekly":
+        budget = sheets_manager.get_budget(user_id, 'weekly_total')
+    elif data == "summary_monthly":
+        budget = sheets_manager.get_budget(user_id, 'monthly_total')
 
     if data == "summary_monthly":
         # Handle detailed monthly summary
         message += "📅 This Month:\n"
         if summary.get("this_month"):
+            total_monthly = sum(summary["this_month"].values())
+            if budget:
+                percentage = (total_monthly / budget) * 100
+                status = "✅" if percentage <= 100 else "⚠️"
+                message += f"Total: ${total_monthly:.2f} / ${budget:.2f} ({percentage:.1f}%) {status}\n\n"
+            
             for category, amount in summary["this_month"].items():
-                budget = sheets_manager.get_budget(user_id, category)
-                if budget:
-                    percentage = (amount / budget) * 100
-                    status = "✅" if percentage <= budget else "⚠️"
-                    message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f} / ${budget:.2f} ({percentage:.1f}%) {status}\n"
+                category_budget = sheets_manager.get_budget(user_id, category)
+                if category_budget:
+                    percentage = (amount / category_budget) * 100
+                    status = "✅" if percentage <= 100 else "⚠️"
+                    message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f} / ${category_budget:.2f} ({percentage:.1f}%) {status}\n"
                 else:
                     message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f}\n"
         else:
@@ -285,57 +408,183 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         message += "\n🗓 Last 31 Days:\n"
         if summary.get("last_31_days"):
+            total_31_days = sum(summary["last_31_days"].values())
+            if budget:
+                percentage = (total_31_days / budget) * 100
+                status = "✅" if percentage <= 100 else "⚠️"
+                message += f"Total: ${total_31_days:.2f} / ${budget:.2f} ({percentage:.1f}%) {status}\n\n"
+            
             for category, amount in summary["last_31_days"].items():
-                budget = sheets_manager.get_budget(user_id, category)
-                if budget:
-                    percentage = (amount / budget) * 100
-                    status = "✅" if percentage <= budget else "⚠️"
-                    message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f} / ${budget:.2f} ({percentage:.1f}%) {status}\n"
+                category_budget = sheets_manager.get_budget(user_id, category)
+                if category_budget:
+                    percentage = (amount / category_budget) * 100
+                    status = "✅" if percentage <= 100 else "⚠️"
+                    message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f} / ${category_budget:.2f} ({percentage:.1f}%) {status}\n"
                 else:
                     message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f}\n"
         else:
             message += "No expenses in the last 31 days.\n"
 
     else:
-        # Handle daily, weekly, and all-time summaries (existing format)
+        # Handle daily, weekly, and all-time summaries
+        total = sum(summary.values())
+        if budget:
+            percentage = (total / budget) * 100
+            status = "✅" if percentage <= 100 else "⚠️"
+            message += f"Total: ${total:.2f} / ${budget:.2f} ({percentage:.1f}%) {status}\n\n"
+        
         for category, amount in summary.items():
-            budget = sheets_manager.get_budget(user_id, category)
-            if budget:
-                percentage = (amount / budget) * 100
-                status = "✅" if percentage <= budget else "⚠️"
-                message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f} / ${budget:.2f} ({percentage:.1f}%) {status}\n"
+            category_budget = sheets_manager.get_budget(user_id, category)
+            if category_budget:
+                percentage = (amount / category_budget) * 100
+                status = "✅" if percentage <= 100 else "⚠️"
+                message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f} / ${category_budget:.2f} ({percentage:.1f}%) {status}\n"
             else:
                 message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f}\n"
 
     await query.edit_message_text(message)
 
-async def set_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set budget limits for categories."""
-    if len(context.args) < 2:
-        await update.message.reply_text(
-            "Please provide category and amount.\n"
-            "Example: /budget food 200"
-        )
-        return
+async def set_budget_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the set budget conversation."""
+    # Create keyboard for categories
+    keyboard = []
+    for category in CATEGORIES.values():
+        keyboard.append([InlineKeyboardButton(category, callback_data=f"budget_{category}")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "Please select a category to set budget for:",
+        reply_markup=reply_markup
+    )
+    return BUDGET_CATEGORY
 
-    category = context.args[0].lower()
+async def set_budget_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the category selection and ask for amount."""
+    query = update.callback_query
+    await query.answer()
+    
+    category = query.data.replace("budget_", "")
+    context.user_data['budget_category'] = category
+    
+    await query.edit_message_text(
+        f"Selected category: {category}\n\n"
+        "Please enter the budget amount:"
+    )
+    return BUDGET_AMOUNT
+
+async def set_budget_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the amount and save the budget."""
     try:
-        amount = float(context.args[1])
-        if category not in CATEGORIES:
-            await update.message.reply_text(
-                f"Invalid category. Available categories:\n" + 
-                "\n".join([f"- {cat}" for cat in CATEGORIES.values()])
-            )
-            return
-
+        amount = float(update.message.text)
+        category = context.user_data['budget_category']
         user_id = update.effective_user.id
+        
         sheets_manager.set_budget(user_id, category, amount)
         await update.message.reply_text(
-            f"✅ Budget set for {CATEGORIES[category]}: ${amount:.2f}"
+            f"✅ Budget set for {category}: ${amount:.2f}"
         )
-
+        return ConversationHandler.END
     except ValueError:
-        await update.message.reply_text("Please provide a valid amount.")
+        await update.message.reply_text(
+            "Please enter a valid number for the amount."
+        )
+        return BUDGET_AMOUNT
+
+async def set_daily_budget_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the set daily budget conversation."""
+    context.user_data['budget_type'] = 'daily_total'
+    await update.message.reply_text(
+        "Please enter your daily budget amount:"
+    )
+    return BUDGET_AMOUNT
+
+async def set_weekly_budget_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the set weekly budget conversation."""
+    context.user_data['budget_type'] = 'weekly_total'
+    await update.message.reply_text(
+        "Please enter your weekly budget amount:"
+    )
+    return BUDGET_AMOUNT
+
+async def set_monthly_budget_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the set monthly budget conversation."""
+    context.user_data['budget_type'] = 'monthly_total'
+    await update.message.reply_text(
+        "Please enter your monthly budget amount:"
+    )
+    return BUDGET_AMOUNT
+
+async def set_total_budget_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the amount for total budgets (daily/weekly/monthly)."""
+    try:
+        amount = float(update.message.text)
+        user_id = update.effective_user.id
+        budget_type = context.user_data.get('budget_type')
+        
+        if not budget_type:
+            await update.message.reply_text("❌ Error: Could not determine budget type. Please try again.")
+            return ConversationHandler.END
+        
+        # Set the budget
+        sheets_manager.set_budget(user_id, budget_type, amount)
+        
+        # Send confirmation message
+        budget_name = {
+            'daily_total': 'Daily',
+            'weekly_total': 'Weekly',
+            'monthly_total': 'Monthly'
+        }.get(budget_type, budget_type)
+        
+        await update.message.reply_text(
+            f"✅ {budget_name} budget set to: ${amount:.2f}"
+        )
+        
+        # Clear the budget type from context
+        context.user_data.pop('budget_type', None)
+        
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text(
+            "Please enter a valid number for the amount."
+        )
+        return BUDGET_AMOUNT
+
+async def reset_today_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start the reset today conversation."""
+    # Create keyboard for categories
+    keyboard = [
+        [InlineKeyboardButton("All Categories", callback_data="reset_all")],
+    ]
+    for category in CATEGORIES.values():
+        keyboard.append([InlineKeyboardButton(category, callback_data=f"reset_{category}")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "Please select a category to reset (or 'All Categories' to reset everything):",
+        reply_markup=reply_markup
+    )
+    return RESET_CATEGORY
+
+async def reset_today_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the category selection and reset expenses."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    category = query.data.replace("reset_", "")
+    
+    if category == "all":
+        if sheets_manager.delete_expenses_today(user_id):
+            await query.edit_message_text("✅ Reset all of today's expenses.")
+        else:
+            await query.edit_message_text("No expenses found today to reset.")
+    else:
+        if sheets_manager.delete_expenses_today(user_id, category):
+            await query.edit_message_text(f"✅ Reset today's expenses for category '{category}'.")
+        else:
+            await query.edit_message_text(f"No expenses found for category '{category}' today to reset.")
+    
+    return ConversationHandler.END
 
 async def get_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get daily expense summary and budget status."""
@@ -371,50 +620,6 @@ async def get_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message += f"{CATEGORIES.get(category, category).capitalize()}: ${amount:.2f}\n"
 
     await update.message.reply_text(message)
-
-async def set_daily_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set the total daily budget."""
-    if len(context.args) < 1:
-        await update.message.reply_text(
-            "Please provide the daily budget amount.\n"
-            "Example: /set_daily 100"
-        )
-        return
-
-    try:
-        amount = float(context.args[0])
-        user_id = update.effective_user.id
-        # We'll store the daily budget in the Budgets sheet under a special category, e.g., 'daily_total'
-        sheets_manager.set_budget(user_id, 'daily_total', amount)
-        await update.message.reply_text(
-            f"✅ Daily budget set to: ${amount:.2f}"
-        )
-
-    except ValueError:
-        await update.message.reply_text("Please provide a valid amount.")
-
-async def reset_today_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Resets today's expenses for the user, optionally by category."""
-    user_id = update.effective_user.id
-    category = context.args[0].lower() if context.args else None
-
-    if category and category not in CATEGORIES:
-         await update.message.reply_text(
-             f"Invalid category. Available categories:\n" + 
-             "\n".join([f"- {cat}" for cat in CATEGORIES.values()])
-         )
-         return
-
-    if sheets_manager.delete_expenses_today(user_id, category):
-        if category:
-            await update.message.reply_text(f"✅ Reset today's expenses for category '{CATEGORIES.get(category, category)}'.")
-        else:
-            await update.message.reply_text("✅ Reset all of today's expenses.")
-    else:
-        if category:
-            await update.message.reply_text(f"No expenses found for category '{CATEGORIES.get(category, category)}' today to reset.")
-        else:
-            await update.message.reply_text("No expenses found today to reset.")
 
 async def undo_last_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Undoes the user's latest expense entry."""
@@ -507,22 +712,74 @@ def main():
     # Create the Application
     application = Application.builder().token(os.getenv('TELEGRAM_TOKEN')).build()
 
+    # Add conversation handlers
+    add_expense_handler = ConversationHandler(
+        entry_points=[CommandHandler("add", add_expense_start)],
+        states={
+            AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_expense_amount)],
+            CATEGORY: [CallbackQueryHandler(add_expense_category, pattern="^category_")],
+        },
+        fallbacks=[],
+    )
+
+    set_budget_handler = ConversationHandler(
+        entry_points=[CommandHandler("budget", set_budget_start)],
+        states={
+            BUDGET_CATEGORY: [CallbackQueryHandler(set_budget_category, pattern="^budget_")],
+            BUDGET_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_budget_amount)],
+        },
+        fallbacks=[],
+    )
+
+    set_daily_budget_handler = ConversationHandler(
+        entry_points=[CommandHandler("set_daily", set_daily_budget_start)],
+        states={
+            BUDGET_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_total_budget_amount)],
+        },
+        fallbacks=[],
+    )
+
+    set_weekly_budget_handler = ConversationHandler(
+        entry_points=[CommandHandler("set_weekly", set_weekly_budget_start)],
+        states={
+            BUDGET_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_total_budget_amount)],
+        },
+        fallbacks=[],
+    )
+
+    set_monthly_budget_handler = ConversationHandler(
+        entry_points=[CommandHandler("set_monthly", set_monthly_budget_start)],
+        states={
+            BUDGET_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_total_budget_amount)],
+        },
+        fallbacks=[],
+    )
+
+    reset_today_handler = ConversationHandler(
+        entry_points=[CommandHandler("reset_today", reset_today_start)],
+        states={
+            RESET_CATEGORY: [CallbackQueryHandler(reset_today_category, pattern="^reset_")],
+        },
+        fallbacks=[],
+    )
+
     # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("add", add_expense))
+    application.add_handler(add_expense_handler)
+    application.add_handler(set_budget_handler)
+    application.add_handler(set_daily_budget_handler)
+    application.add_handler(set_weekly_budget_handler)
+    application.add_handler(set_monthly_budget_handler)
+    application.add_handler(reset_today_handler)
     application.add_handler(CommandHandler("view", view_expenses))
-    application.add_handler(CommandHandler("budget", set_budget))
-    application.add_handler(CommandHandler("set_daily", set_daily_budget))
-    application.add_handler(CommandHandler("reset_today", reset_today_expenses))
     application.add_handler(CommandHandler("undo", undo_last_expense))
     application.add_handler(CommandHandler("summary", get_summary))
     application.add_handler(CommandHandler("help", start))
+    application.add_handler(CommandHandler("start", start))
 
     # Add the callback query handler
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    # Schedule daily summary job using application.job_queue
-    # Schedule the job to run every day at 11:59 PM
+    # Schedule daily summary job
     application.job_queue.run_daily(
         send_daily_summary_job,
         time=time(hour=23, minute=59),
