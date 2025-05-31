@@ -855,12 +855,34 @@ def main():
 
     # Start both the bot and web server
     async def start_services():
-        await start_web_server()
+        # Start web server
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 8080)))
+        await site.start()
+        logger.info("Web server started on port %s", os.getenv('PORT', 8080))
+
+        # Start bot
         await application.initialize()
         await application.start()
-        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+        await application.updater.start_polling()
 
-    asyncio.run(start_services())
+        try:
+            # Keep the application running
+            await application.updater.stop_on_signal()
+        finally:
+            # Properly shut down the application
+            await application.stop()
+            await application.shutdown()
+            await runner.cleanup()
+
+    # Run the application
+    try:
+        asyncio.run(start_services())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Error running bot: {e}")
 
 if __name__ == '__main__':
     main() 
