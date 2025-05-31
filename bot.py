@@ -869,7 +869,10 @@ def main():
 
         try:
             # Keep the application running
-            await application.updater.stop_on_signal()
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            logger.info("Received shutdown signal")
         finally:
             # Properly shut down the application
             logger.info("Stopping updater...")
